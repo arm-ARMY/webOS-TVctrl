@@ -2,20 +2,24 @@
 
 CLI remote control and diagnostic script for rooted LG webOS TVs using `luna-send` and `/bin/sh`. Includes an `install.sh` script that automates setup and installation.
 
+> **⚠️ WARNING (rootmy.tv):** NEVER EVER OVERWRITE SYSTEM PARTITIONS LIKE KERNEL, ROOTFS, TVSERVICE.
+> Your TV will be bricked, guaranteed! See https://rootmy.tv/warning for more info.
+
 ## Compatibility & Tested Environment
 
-This script was written specifically for and tested on the following TV model and software version:
+This script was written specifically for and tested on the following TV model, software version, and root method:
 
 - **TV Model:** LG `32LQ620BPSB`
 - **OS Version:** LG webOS TV `5.4`
 - **Firmware Version:** `03.33.85`
 - **SDK Version:** `7.3.1`
+- **Root Method:** `dejavuln-autoroot` ([https://github.com/throwaway96/dejavuln-autoroot](https://github.com/throwaway96/dejavuln-autoroot))
 
 *(Other webOS models or versions may have different `luna-send` service endpoints, app IDs, or `/dev/input/event*` mappings and may require adjustments.)*
 
 ## Requirements
 
-- Rooted LG webOS TV with SSH access
+- Rooted LG webOS TV (e.g., via `dejavuln-autoroot`) with SSH access
 - `luna-send` available in the TV shell
 - POSIX `/bin/sh` (compatible with BusyBox / standard webOS shell)
 
@@ -82,7 +86,7 @@ tvctrl bg
 
 ## Disclaimer
 
-This script interacts directly with internal webOS services via `luna-send` on rooted devices. Use at your own risk.
+This script interacts directly with internal webOS services via `luna-send` on rooted devices. Use at your own risk. Never overwrite system partitions (`KERNEL`, `ROOTFS`, `TVSERVICE`).
 
 ## License
 
