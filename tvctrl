@@ -1,0 +1,868 @@
+#!/bin/sh
+
+# Cores e prefixos padronizados
+INFO="\033[1;37m[i]\033[0m"
+ASK="\033[1;33m[?]\033[0m"
+OK="\033[1;32m[*]\033[0m"
+WARN="\033[1;31m[*]\033[0m"
+ERR="\033[1;31m[!]\033[0m"
+
+print_banner() {
+    clear
+    printf "\033[1;32m"
+    cat << 'EOF'
+               __   ____  ____
+   _    _____ / /  / __ \/ __/
+  | |/|/ / -_) _ \/ /_/ /\ \  
+  |__,__/\__/_.__/\____/___/  
+   _______   __    __      __ 
+  /_  __/ | / /___/ /_____/ / 
+   / /  | |/ / __/ __/ __/ / 
+  /_/   |___/\__/\__/_/ /_/  
+EOF
+    printf "\033[0m\n"
+}
+
+# --- MÓDULO 1: VOLUME ---
+cmd_vol() {
+    printf "\n%b Volume is now set to:\n\n" "$INFO"
+
+    STATUS=$(luna-send -n 1 -w 1000 luna://com.webos.audio/getVolume '{}' 2>/dev/null)
+    VOL=$(echo "$STATUS" | sed -n 's/.*"volume":\([0-9]*\).*/\1/p')
+    MUTED=$(echo "$STATUS" | sed -n 's/.*"muteStatus":\([a-z]*\).*/\1/p')
+
+    if [ "$MUTED" = "true" ]; then
+        printf "\033[1;31m(Muted)\033[0m\n\n"
+    else
+        printf "%s%%\n\n" "$VOL"
+    fi
+
+    while true; do
+        printf "%b Enter volume value (0-100), 'm' to mute, or 'q' to back: " "$ASK"
+        read -r value
+        printf "\n"
+
+        if [ "$value" = "q" ] || [ "$value" = "Q" ]; then
+            break
+        elif [ "$value" = "m" ] || [ "$value" = "M" ]; then
+            luna-send -n 1 -f luna://com.webos.audio/setMuted '{"muted": true}' > /dev/null 2>&1
+            printf "%b TV Muted\n\n" "$WARN"
+            break
+        elif echo "$value" | grep -qE '^[0-9]+$' && [ "$value" -ge 0 ] && [ "$value" -le 100 ]; then
+            luna-send -n 1 -f luna://com.webos.audio/setMuted '{"muted": false}' > /dev/null 2>&1
+            luna-send -n 1 -f luna://com.webos.audio/setVolume '{"volume": '"$value"'}' > /dev/null 2>&1
+            printf "%b Volume set to %s%%\n" "$OK" "$value"
+            break
+        else
+            printf "%b Invalid value. Enter 0-100, 'm', or 'q'.\n\n" "$ERR"
+        fi
+    done
+}
+
+# --- MÓDULO 2: YOUTUBE (COM RETORNO E LIMPEZA DE RAM) ---
+cmd_yt() {
+    PREV_APP=$(luna-send -n 1 -w 1000 luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null \
+        | sed -n 's/.*"appId":"\([^"]*\)".*/\1/p')
+
+    if [ -z "$PREV_APP" ] || [ "$PREV_APP" = "youtube.leanback.v4" ]; then
+        PREV_APP="com.webos.app.hdmi1"
+    fi
+
+    URL="$1"
+    if [ -z "$URL" ]; then
+        printf "\n%b Paste YouTube URL (or press Enter for Home): " "$ASK"
+        read -r URL
+    fi
+
+    printf "\n%b Opening YouTube ad free...\n\n" "$INFO"
+    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "youtube.leanback.v4"}' > /dev/null 2>&1
+    sleep 1
+
+    if [ -n "$URL" ]; then
+        TARGET_URL=$(echo "$URL" | cut -d'&' -f1)
+        printf "%b Loading video: %s\n\n" "$INFO" "$TARGET_URL"
+        luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"youtube.leanback.v4\", \"params\": {\"contentTarget\": \"$TARGET_URL\"}}" > /dev/null 2>&1
+    else
+        printf "%b No link provided. Opening app home screen...\n\n" "$INFO"
+        luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "youtube.leanback.v4"}' > /dev/null 2>&1
+    fi
+
+    printf "%b Press Enter when done to close YouTube and return to %s..." "$ASK" "$PREV_APP"
+    read -r _
+    
+    printf "\n%b Closing YouTube to free RAM...\n" "$INFO"
+    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "youtube.leanback.v4"}' > /dev/null 2>&1
+    
+    printf "%b Returning to %s...\n\n" "$INFO" "$PREV_APP"
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$PREV_APP\"}" > /dev/null 2>&1
+}
+
+# --- MÓDULO 3: LIVE TV (COM RETORNO PARA A ENTRADA ANTERIOR - ATALHO CLI) ---
+cmd_livetv() {
+    PREV_APP=$(luna-send -n 1 -w 1000 luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null \
+        | sed -n 's/.*"appId":"\([^"]*\)".*/\1/p')
+
+    if [ -z "$PREV_APP" ] || [ "$PREV_APP" = "com.webos.app.livetv" ]; then
+        PREV_APP="com.webos.app.hdmi1"
+    fi
+
+    printf "\n%b Switching to Live TV...\n\n" "$INFO"
+    luna-send -n 1 -f luna://com.webos.service.applicationmanager/launch '{"id": "com.webos.app.livetv"}' > /dev/null 2>&1
+    printf "%b Live TV launched successfully.\n\n" "$OK"
+
+    printf "%b Press Enter when done to return to %s..." "$ASK" "$PREV_APP"
+    read -r _
+
+    printf "\n%b Returning to %s...\n\n" "$INFO" "$PREV_APP"
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$PREV_APP\"}" > /dev/null 2>&1
+}
+
+# --- MÓDULO 4: SCREEN ON ---
+cmd_screen_on() {
+    printf "\n%b Monitor set ON\n" "$OK"
+    luna-send -n 1 -f luna://com.webos.service.tvpower/power/turnOnScreen '{}' > /dev/null 2>&1
+}
+
+# --- MÓDULO 5: SCREEN OFF ---
+cmd_screen_off() {
+    printf "\n%b Monitor set OFF\n" "$WARN"
+    luna-send -n 1 -f luna://com.webos.service.tvpower/power/turnOffScreen '{}' > /dev/null 2>&1
+}
+
+# --- MÓDULO 6: BACKLIGHT ---
+cmd_backlight() {
+    STATUS=$(luna-send -n 1 -w 1000 luna://com.webos.settingsservice/getSystemSettings '{"category": "picture", "keys": ["backlight"]}' 2>/dev/null)
+    BL=$(echo "$STATUS" | sed -n 's/.*"backlight":\([0-9]*\).*/\1/p')
+    printf "\n%b Backlight is now set to: %s%%\n\n" "$INFO" "$BL"
+
+    while true; do
+        printf "%b Enter backlight value (0-100) or 'q' to back: " "$ASK"
+        read -r val
+        printf "\n"
+        if [ "$val" = "q" ] || [ "$val" = "Q" ]; then
+            break
+        elif echo "$val" | grep -qE '^[0-9]+$' && [ "$val" -ge 0 ] && [ "$val" -le 100 ]; then
+            luna-send -n 1 -f luna://com.webos.settingsservice/setSystemSettings '{"category": "picture", "settings": {"backlight": '"$val"'}}' > /dev/null 2>&1
+            printf "%b Backlight set to %s%%\n" "$OK" "$val"
+            break
+        else
+            printf "%b Invalid value. Enter 0-100 or 'q'.\n\n" "$ERR"
+        fi
+    done
+}
+
+# --- HELPER: LER PARÂMETRO DE IMAGEM ATUAL ---
+get_picture_setting() {
+    KEY="$1"
+    LABEL="$2"
+    UNIT="$3"
+
+    STATUS=$(luna-send -n 1 -w 1000 luna://com.webos.settingsservice/getSystemSettings "{\"category\": \"picture\", \"keys\": [\"$KEY\"]}" 2>/dev/null)
+
+    SETTINGS_PART=$(echo "$STATUS" | sed -n 's/.*"settings":{\(.*\)}.*/\1/p')
+    VAL=$(echo "$SETTINGS_PART" | sed -n "s/.*\"$KEY\":[\"]*\\([^\",}]*\\)[\"]*.*/\1/p")
+
+    if [ -n "$VAL" ]; then
+        printf "\n%b Current %s: %s%s\n" "$OK" "$LABEL" "$VAL" "$UNIT"
+    else
+        printf "\n%b Could not read %s.\n" "$ERR" "$LABEL"
+    fi
+}
+
+# --- SUBMENU: CHECK PICTURE SETTINGS ---
+cmd_check_picture_menu() {
+    while true; do
+        print_banner
+        printf "  \033[1;33m=== CHECK PICTURE SETTINGS ===\033[0m\n\n"
+        printf "  \033[1;37m1)\033[0m Backlight\n"
+        printf "  \033[1;37m2)\033[0m Brightness\n"
+        printf "  \033[1;37m3)\033[0m Contrast\n"
+        printf "  \033[1;37m4)\033[0m Color\n"
+        printf "  \033[1;37m5)\033[0m Sharpness\n"
+        printf "  \033[1;37m6)\033[0m Picture Mode\n"
+        printf "  \033[1;31m0)\033[0m Back to Remote Commands\n\n"
+        printf "%b Select an option: " "$ASK"
+        read -r chkopt
+
+        case "$chkopt" in
+            1) get_picture_setting "backlight" "Backlight" "%"; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            2) get_picture_setting "brightness" "Brightness" "%"; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            3) get_picture_setting "contrast" "Contrast" "%"; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            4) get_picture_setting "color" "Color" "%"; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            5) get_picture_setting "sharpness" "Sharpness" "%"; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            6) get_picture_setting "pictureMode" "Picture Mode" ""; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            0) break ;;
+            *) printf "\n%b Invalid option.\n" "$ERR"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- FUNÇÃO GENÉRICA DE AJUSTE DE IMAGEM (0-100) ---
+set_picture_setting() {
+    KEY="$1"
+    LABEL="$2"
+
+    STATUS=$(luna-send -n 1 -w 1000 luna://com.webos.settingsservice/getSystemSettings "{\"category\": \"picture\", \"keys\": [\"$KEY\"]}" 2>/dev/null)
+    VAL=$(echo "$STATUS" | sed -n "s/.*\"$KEY\":\([0-9]*\).*/\1/p")
+    printf "\n%b Current %s: %s%%\n\n" "$INFO" "$LABEL" "$VAL"
+
+    while true; do
+        printf "%b Enter new %s value (0-100) or 'q' to back: " "$ASK" "$LABEL"
+        read -r val
+        printf "\n"
+        if [ "$val" = "q" ] || [ "$val" = "Q" ]; then
+            break
+        elif echo "$val" | grep -qE '^[0-9]+$' && [ "$val" -ge 0 ] && [ "$val" -le 100 ]; then
+            luna-send -n 1 -f luna://com.webos.settingsservice/setSystemSettings "{\"category\": \"picture\", \"settings\": {\"$KEY\": $val}}" > /dev/null 2>&1
+            printf "%b %s set to %s%%\n\n" "$OK" "$LABEL" "$val"
+            break
+        else
+            printf "%b Invalid value. Enter 0-100 or 'q'.\n\n" "$ERR"
+        fi
+    done
+}
+
+# --- SUBMENU DE CONFIGURAÇÕES DE IMAGEM ---
+cmd_picture_menu() {
+    while true; do
+        print_banner
+        printf "  \033[1;33m=== PICTURE SETTINGS ===\033[0m\n\n"
+        printf "  \033[1;37m1)\033[0m Backlight\n"
+        printf "  \033[1;37m2)\033[0m Brightness\n"
+        printf "  \033[1;37m3)\033[0m Contrast\n"
+        printf "  \033[1;37m4)\033[0m Color\n"
+        printf "  \033[1;37m5)\033[0m Sharpness\n"
+        printf "  \033[1;37m6)\033[0m Picture Mode\n"
+        printf "  \033[1;31m0)\033[0m Back to Remote Commands\n\n"
+        printf "%b Select an option: " "$ASK"
+        read -r picopt
+
+        case "$picopt" in
+            1) cmd_backlight; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            2) set_picture_setting "brightness" "Brightness"; printf "%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            3) set_picture_setting "contrast" "Contrast"; printf "%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            4) set_picture_setting "color" "Color"; printf "%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            5) set_picture_setting "sharpness" "Sharpness"; printf "%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            6)
+                printf "\n%b Enter picture mode (e.g., eco, standard, cinema, game, vivid): " "$ASK"
+                read -r pmode
+                if [ -n "$pmode" ]; then
+                    luna-send -n 1 -f luna://com.webos.settingsservice/setSystemSettings "{\"category\": \"picture\", \"settings\": {\"pictureMode\": \"$pmode\"}}" > /dev/null 2>&1
+                    printf "\n%b Picture Mode set to: %s\n\n" "$OK" "$pmode"
+                else
+                    printf "\n%b Invalid mode.\n\n" "$ERR"
+                fi
+                printf "%b Press Enter to continue..." "$INFO"; read -r _
+                ;;
+            0) break ;;
+            *) printf "\n%b Invalid option.\n" "$ERR"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- MÓDULO 7: SCREENSHOT (SCC COM AJUSTE TEMPORÁRIO DE IMAGEM) ---
+cmd_screenshot() {
+    CAP_DIR="/home/root/Apps/ScreenCap"
+    mkdir -p "$CAP_DIR"
+
+    PIC_STATUS=$(luna-send -n 1 -w 1000 luna://com.webos.settingsservice/getSystemSettings '{"category": "picture", "keys": ["brightness", "backlight", "contrast"]}' 2>/dev/null)
+    SETTINGS_PART=$(echo "$PIC_STATUS" | sed -n 's/.*"settings":{\(.*\)}.*/\1/p')
+    ORIG_BR=$(echo "$SETTINGS_PART" | sed -n 's/.*"brightness":["]*\([^",}]*\)["]*.*/\1/p')
+    ORIG_BL=$(echo "$SETTINGS_PART" | sed -n 's/.*"backlight":["]*\([^",}]*\)["]*.*/\1/p')
+    ORIG_CT=$(echo "$SETTINGS_PART" | sed -n 's/.*"contrast":["]*\([^",}]*\)["]*.*/\1/p')
+
+    printf "\n%b Boosting Brightness (80%%), Backlight (70%%) and Contrast (85%%) for capture...\n" "$INFO"
+    luna-send -n 1 -f luna://com.webos.settingsservice/setSystemSettings '{"category": "picture", "settings": {"brightness": 80, "backlight": 70, "contrast": 85}}' > /dev/null 2>&1
+    sleep 2
+
+    printf "%b Taking a screenshot...\n\n" "$INFO"
+    luna-send -n 1 -f 'luna://com.webos.service.capture/executeOneShot' '{"path":"/home/root/Apps/ScreenCap/screenshot.png","method":"DISPLAY","format":"PNG"}' > /dev/null 2>&1
+    sleep 1
+
+    mv "$CAP_DIR/screenshot.png" "$CAP_DIR/scc_$(date +%Y%m%d_%H%M%S).png" 2> /dev/null
+
+    if [ -n "$ORIG_BR" ] && [ -n "$ORIG_BL" ] && [ -n "$ORIG_CT" ]; then
+        luna-send -n 1 -f luna://com.webos.settingsservice/setSystemSettings "{\"category\": \"picture\", \"settings\": {\"brightness\": $ORIG_BR, \"backlight\": $ORIG_BL, \"contrast\": $ORIG_CT}}" > /dev/null 2>&1
+        printf "%b Restored Brightness (%s%%), Backlight (%s%%) and Contrast (%s%%)\n" "$INFO" "$ORIG_BR" "$ORIG_BL" "$ORIG_CT"
+    fi
+
+    printf "%b File stored at %s/\n" "$OK" "$CAP_DIR"
+}
+
+# --- MÓDULO 8: TV ALERT MESSAGE (TVMSG) ---
+cmd_tvmsg() {
+    printf "\n%b Message system alert\n" "$INFO"
+    echo
+    printf "%b Enter the message to display on screen: " "$ASK"
+    read -r ENTRADA
+
+    if [ -z "$ENTRADA" ]; then
+        printf "\n%b No message entered. Operation aborted.\n\n" "$ERR"
+        return
+    fi
+
+    printf "\n%b Sending alert to the TV screen...\n" "$INFO"
+    echo
+    sleep 1
+    luna-send -n 1 -f luna://com.webos.notification/createAlert "{\"buttons\":[{\"label\":\"OK\"}], \"message\": \"$ENTRADA\"}" > /dev/null 2>&1
+
+    printf "%b The alert will remain until the OK button is pressed.\n" "$OK"
+}
+
+# --- MÓDULO 9: TV POP-UP TOAST (TVPU) ---
+cmd_tvpu() {
+    printf "\n%b Pop-up alert\n" "$INFO"
+    echo
+    printf "%b Enter pop-up message to display: " "$ASK"
+    read -r ENTRADA
+
+    if [ -z "$ENTRADA" ]; then
+        printf "\n%b No message entered. Operation aborted.\n\n" "$ERR"
+        return
+    fi
+
+    printf "\n%b Sending pop-up to TV screen...\n" "$INFO"
+    sleep 1
+    luna-send -n 1 -f luna://com.webos.notification/createToast "{\"message\": \"$ENTRADA\"}" > /dev/null 2>&1
+    echo
+    printf "%b Pop-up sent to the TV...\n" "$OK"
+}
+
+# --- MÓDULO 10: WEB BROWSER (COM RETORNO E URL OPCIONAL) ---
+cmd_browser() {
+    PREV_APP=$(luna-send -n 1 -w 1000 luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null \
+        | sed -n 's/.*"appId":"\([^"]*\)".*/\1/p')
+
+    if [ -z "$PREV_APP" ] || [ "$PREV_APP" = "com.webos.app.browser" ]; then
+        PREV_APP="com.webos.app.hdmi1"
+    fi
+
+    URL="$1"
+    if [ -z "$URL" ]; then
+        printf "\n%b Paste Website URL (or press Enter for Home): " "$ASK"
+        read -r URL
+    fi
+
+    printf "\n%b Opening Web Browser...\n\n" "$INFO"
+    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "com.webos.app.browser"}' > /dev/null 2>&1
+    sleep 1
+
+    if [ -n "$URL" ]; then
+        printf "%b Loading URL: %s\n\n" "$INFO" "$URL"
+        luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"com.webos.app.browser\", \"params\": {\"target\": \"$URL\"}}" > /dev/null 2>&1
+    else
+        printf "%b No link provided. Opening browser home screen...\n\n" "$INFO"
+        luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.browser"}' > /dev/null 2>&1
+    fi
+
+    printf "%b Press Enter when done to close Browser and return to %s..." "$ASK" "$PREV_APP"
+    read -r _
+    
+    printf "\n%b Closing Web Browser to free RAM...\n" "$INFO"
+    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "com.webos.app.browser"}' > /dev/null 2>&1
+    
+    printf "\n%b Returning to %s...\n\n" "$INFO" "$PREV_APP"
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$PREV_APP\"}" > /dev/null 2>&1
+}
+
+# --- HELPER: TROCAR INPUT/APP E AGUARDAR ENTER PARA RETORNAR ---
+switch_input_with_return() {
+    TARGET_ID="$1"
+    TARGET_PARAMS="$2"
+    LABEL="$3"
+
+    PREV_APP=$(luna-send -n 1 -w 1000 luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null \
+        | sed -n 's/.*"appId":"\([^"]*\)".*/\1/p')
+
+    if [ -z "$PREV_APP" ] || [ "$PREV_APP" = "$TARGET_ID" ]; then
+        PREV_APP="com.webos.app.hdmi1"
+    fi
+
+    printf "\n%b Set Input/Source to:\n\n" "$INFO"
+    sleep 1
+    printf "%b %s\n\n" "$OK" "$LABEL"
+    sleep 3
+
+    if [ -n "$TARGET_PARAMS" ]; then
+        luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$TARGET_ID\", \"params\": $TARGET_PARAMS}" > /dev/null 2>&1
+    else
+        luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$TARGET_ID\"}" > /dev/null 2>&1
+    fi
+
+    printf "%b Press Enter when done to return to %s..." "$ASK" "$PREV_APP"
+    read -r _
+
+    printf "\n%b Returning to %s...\n\n" "$INFO" "$PREV_APP"
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$PREV_APP\"}" > /dev/null 2>&1
+}
+
+# --- MÓDULO 15: SWITCH INPUT / SOURCE (ESTÉTICA PADRONIZADA + RETORNO) ---
+cmd_cpanel() {
+    switch_input_with_return "com.webos.app.homeconnect" "" "Control Panel"
+}
+
+cmd_livetv_input() {
+    switch_input_with_return "com.webos.app.livetv" "" "Live TV"
+}
+
+cmd_lgchan() {
+    switch_input_with_return "com.webos.app.lgchannels" "" "LG Channels"
+}
+
+cmd_hdmi1() {
+    switch_input_with_return "com.webos.app.hdmi1" "" "HDMI 1"
+}
+
+cmd_hdmi2() {
+    switch_input_with_return "com.webos.app.hdmi2" "" "HDMI 2"
+}
+
+cmd_media() {
+    switch_input_with_return "com.webos.app.mediadiscovery" '{"target": "/tmp/usb/sda/sda1"}' "USB Storage /tmp/usb/sda/sda1"
+}
+
+cmd_input_menu() {
+    while true; do
+        print_banner
+        printf "  \033[1;33m=== SWITCH INPUT / SOURCE ===\033[0m\n\n"
+        printf "  \033[1;37m1)\033[0m Control Panel\n"
+        printf "  \033[1;37m2)\033[0m Live TV\n"
+        printf "  \033[1;37m3)\033[0m LG Channels\n"
+        printf "  \033[1;37m4)\033[0m HDMI 1\n"
+        printf "  \033[1;37m5)\033[0m HDMI 2\n"
+        printf "  \033[1;37m6)\033[0m USB Mounted\n"
+        printf "  \033[1;31m0)\033[0m Back to Remote Commands\n\n"
+        printf "%b Select an option: " "$ASK"
+        read -r inopt
+
+        case "$inopt" in
+            1) cmd_cpanel ;;
+            2) cmd_livetv_input ;;
+            3) cmd_lgchan ;;
+            4) cmd_hdmi1 ;;
+            5) cmd_hdmi2 ;;
+            6) cmd_media ;;
+            0) break ;;
+            *) printf "\n%b Invalid option.\n" "$ERR"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- MÓDULO 16: SCREEN SAVER ---
+cmd_screensaver() {
+    printf "\n%b Starting Screen Saver...\n\n" "$INFO"
+    sleep 3
+    printf "%b Screen Saver ON\n\n" "$OK"
+    sleep 3
+
+    PREV_APP=$(luna-send -n 1 -w 1000 luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null \
+        | sed -n 's/.*"appId":"\([^"]*\)".*/\1/p')
+
+    if [ -z "$PREV_APP" ] || [ "$PREV_APP" = "com.webos.app.screensaver" ]; then
+        PREV_APP="com.webos.app.hdmi1"
+    fi
+
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.screensaver"}' > /dev/null 2>&1
+
+    printf "%b Press Enter to return to %s..." "$ASK" "$PREV_APP"
+    read -r _
+
+    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "com.webos.app.screensaver"}' > /dev/null 2>&1
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$PREV_APP\"}" > /dev/null 2>&1
+
+    printf "\n%b Screen Saver OFF\n\n" "$WARN"
+}
+
+# --- MÓDULO 17: REAL-TIME REMOTE KEYS (TOGGLE SAVER 's', ENTER PARA SAIR, VOL +-1) ---
+cmd_realtime_keys() {
+    OLD_STTY=$(stty -g 2>/dev/null)
+    trap 'stty "$OLD_STTY" 2>/dev/null; trap - INT TERM EXIT' INT TERM EXIT
+    stty -icanon -echo 2>/dev/null
+
+    SAVER_ON=0
+    SAVER_PREV_APP="com.webos.app.hdmi1"
+
+    printf "\n%b Real-Time Remote Keys active\n\n" "$OK"
+    printf "%b [+/-] Vol +-1 | [m] Mute | [h] HDMI 1 | [2] HDMI 2 | [l] LG Channels\n" "$INFO"
+    printf "%b [y] YouTube  | [b] Browser | [u] USB | [c] Control Panel | [s] ScreenSaver ON/OFF\n" "$INFO"
+    printf "%b [o] Screen ON   | [f] Screen OFF | [Enter/q] Back to Menu\n\n" "$INFO"
+
+    while true; do
+        c=$(dd bs=1 count=1 2>/dev/null)
+        case "$c" in
+            ""|"
+"|"
+")
+                if [ "$SAVER_ON" -eq 1 ]; then
+                    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "com.webos.app.screensaver"}' > /dev/null 2>&1
+                    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$SAVER_PREV_APP\"}" > /dev/null 2>&1
+                    SAVER_ON=0
+                fi
+                break
+                ;;
+            +)
+                CUR=$(luna-send -n 1 -w 1000 luna://com.webos.audio/getVolume '{}' 2>/dev/null | sed -n 's/.*"volume":\([0-9]*\).*/\1/p')
+                [ -z "$CUR" ] && CUR=10
+                NV=$((CUR + 1)); [ "$NV" -gt 100 ] && NV=100
+                luna-send -n 1 -f luna://com.webos.audio/setMuted '{"muted": false}' > /dev/null 2>&1
+                luna-send -n 1 -f luna://com.webos.audio/setVolume "{\"volume\": $NV}" > /dev/null 2>&1
+                printf "%b Volume -> %s%%\n" "$OK" "$NV"
+                ;;
+            -)
+                CUR=$(luna-send -n 1 -w 1000 luna://com.webos.audio/getVolume '{}' 2>/dev/null | sed -n 's/.*"volume":\([0-9]*\).*/\1/p')
+                [ -z "$CUR" ] && CUR=10
+                NV=$((CUR - 1)); [ "$NV" -lt 0 ] && NV=0
+                luna-send -n 1 -f luna://com.webos.audio/setMuted '{"muted": false}' > /dev/null 2>&1
+                luna-send -n 1 -f luna://com.webos.audio/setVolume "{\"volume\": $NV}" > /dev/null 2>&1
+                printf "%b Volume -> %s%%\n" "$OK" "$NV"
+                ;;
+            m|M)
+                MUT=$(luna-send -n 1 -w 1000 luna://com.webos.audio/getVolume '{}' 2>/dev/null | sed -n 's/.*"muteStatus":\([a-z]*\).*/\1/p')
+                if [ "$MUT" = "true" ]; then
+                    luna-send -n 1 -f luna://com.webos.audio/setMuted '{"muted": false}' > /dev/null 2>&1
+                    printf "%b Unmuted\n" "$OK"
+                else
+                    luna-send -n 1 -f luna://com.webos.audio/setMuted '{"muted": true}' > /dev/null 2>&1
+                    printf "%b TV Muted\n" "$WARN"
+                fi
+                ;;
+            h|H)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.hdmi1"}' > /dev/null 2>&1
+                printf "%b Input -> HDMI 1\n" "$OK"
+                ;;
+            2)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.hdmi2"}' > /dev/null 2>&1
+                printf "%b Input -> HDMI 2\n" "$OK"
+                ;;
+            l|L)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.lgchannels"}' > /dev/null 2>&1
+                printf "%b App -> LG Channels\n" "$OK"
+                ;;
+            y|Y)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "youtube.leanback.v4"}' > /dev/null 2>&1
+                printf "%b App -> YouTube\n" "$OK"
+                ;;
+            b|B)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.browser"}' > /dev/null 2>&1
+                printf "%b App -> Web Browser\n" "$OK"
+                ;;
+            u|U)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.mediadiscovery", "params": {"target": "/tmp/usb/sda/sda1"}}' > /dev/null 2>&1
+                printf "%b Input -> USB Storage\n" "$OK"
+                ;;
+            c|C)
+                luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.homeconnect"}' > /dev/null 2>&1
+                printf "%b App -> Control Panel\n" "$OK"
+                ;;
+            s|S)
+                if [ "$SAVER_ON" -eq 0 ]; then
+                    FG_NOW=$(luna-send -n 1 -w 1000 luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null \
+                        | sed -n 's/.*"appId":"\([^"]*\)".*/\1/p')
+                    if [ -n "$FG_NOW" ] && [ "$FG_NOW" != "com.webos.app.screensaver" ]; then
+                        SAVER_PREV_APP="$FG_NOW"
+                    else
+                        SAVER_PREV_APP="com.webos.app.hdmi1"
+                    fi
+                    luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id": "com.webos.app.screensaver"}' > /dev/null 2>&1
+                    SAVER_ON=1
+                    printf "%b Screen Saver ON (return -> %s)\n" "$OK" "$SAVER_PREV_APP"
+                else
+                    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "com.webos.app.screensaver"}' > /dev/null 2>&1
+                    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$SAVER_PREV_APP\"}" > /dev/null 2>&1
+                    SAVER_ON=0
+                    printf "%b Screen Saver OFF (returned to %s)\n" "$WARN" "$SAVER_PREV_APP"
+                fi
+                ;;
+            o|O)
+                luna-send -n 1 -f luna://com.webos.service.tvpower/power/turnOnScreen '{}' > /dev/null 2>&1
+                printf "%b Monitor set ON\n" "$OK"
+                ;;
+            f|F)
+                luna-send -n 1 -f luna://com.webos.service.tvpower/power/turnOffScreen '{}' > /dev/null 2>&1
+                printf "%b Monitor set OFF\n" "$WARN"
+                ;;
+            q|Q)
+                if [ "$SAVER_ON" -eq 1 ]; then
+                    luna-send -n 1 -f luna://com.webos.applicationManager/closeByAppId '{"id": "com.webos.app.screensaver"}' > /dev/null 2>&1
+                    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\": \"$SAVER_PREV_APP\"}" > /dev/null 2>&1
+                    SAVER_ON=0
+                fi
+                break
+                ;;
+        esac
+    done
+
+    stty "$OLD_STTY" 2>/dev/null
+    trap - INT TERM EXIT
+    printf "\n%b Real-Time Remote Keys stopped.\n" "$INFO"
+}
+
+# --- MÓDULO 11: CAPTURA DE SENSOR IR (HEXADECIMAL PURO - OPÇÃO 7) ---
+cmd_capture_ir() {
+    echo
+    pkill -f "dd if=/dev/input/event1" 2>/dev/null
+    printf "%b Starting to capture raw hexadecimal IR remote control info\n\n" "$OK"
+    printf "%b Press Enter to stop and return to menu...\n\n" "$INFO"
+
+    hexdump -C /dev/input/event1 &
+    HEX_PID=$!
+
+    read -r _
+
+    kill "$HEX_PID" 2>/dev/null
+    wait "$HEX_PID" 2>/dev/null
+    echo
+}
+
+# --- MÓDULO 12: TRADUTOR DE IR EM TEMPO REAL (OPÇÃO 8) ---
+cmd_realtime_ir() {
+    echo
+    pkill -f "dd if=/dev/input/event1" 2>/dev/null
+    printf "%b Real Time IR Translator started\n" "$OK"
+    echo
+    printf "%b Press Enter to stop and return to menu...\n" "$INFO"
+    echo
+
+    (
+        while true; do
+            dd if=/dev/input/event1 bs=24 count=1 2>/dev/null | hexdump -C | awk '{
+                if (NF >= 17 && $10 == "01" && $11 == "00") {
+                    code = $13 $12;
+                    if ($14 == "01") {
+                        name = "Unknown (0x" code ")";
+                        if (code == "0072") name = "Volume Down (-)";
+                        else if (code == "0073") name = "Volume Up (+)";
+                        else if (code == "0071") name = "Mute";
+                        else if (code == "0067") name = "Arrow Up (^)";
+                        else if (code == "006c") name = "Arrow Down (v)";
+                        else if (code == "0069") name = "Arrow Left (<)";
+                        else if (code == "006a") name = "Arrow Right (>)";
+                        else if (code == "001c") name = "Enter / OK";
+                        else if (code == "019c") name = "Back";
+                        else if (code == "000b") name = "Button 0";
+                        else if (code == "0002") name = "Button 1";
+                        else if (code == "0003") name = "Button 2";
+                        else if (code == "0004") name = "Button 3";
+                        else if (code == "0005") name = "Button 4";
+                        else if (code == "0006") name = "Button 5";
+                        else if (code == "0007") name = "Button 6";
+                        else if (code == "0008") name = "Button 7";
+                        else if (code == "0009") name = "Button 8";
+                        else if (code == "000a") name = "Button 9";
+                        else if (code == "00d9") name = "Search";
+                        else if (code == "0305") name = "Home";
+                        else if (code == "0192") name = "Channel Up (^)";
+                        else if (code == "0193") name = "Channel Down (v)";
+                        else if (code == "03e2") name = "More";
+                        else if (code == "040e") name = "Prime Video";
+                        else if (code == "040d") name = "Netflix";
+                        else if (code == "0415") name = "Globo Play";
+                        else if (code == "0412") name = "Disney";
+                        else if (code == "008b") name = "Settings";
+                        else if (code == "00f1") name = "Input";
+                        else if (code == "016a") name = "Guide";
+                        else if (code == "00a8") name = "Rewind";
+                        else if (code == "00cf") name = "Play";
+                        else if (code == "0077") name = "Pause";
+                        else if (code == "00d0") name = "Forward";
+                        else if (code == "00a7") name = "Rec";
+                        else if (code == "018f") name = "Green Button";
+                        else if (code == "0190") name = "Yellow Button";
+                        else if (code == "0191") name = "Blue Button";
+                        else if (code == "018e") name = "Red Button";
+                        else if (code == "0080") name = "Live Playback";
+                        else if (code == "0303") name = "Channels";
+                        else if (code == "033d") name = "SAP";
+                        else if (code == "0166") name = "Info";
+                        else if (code == "045c") name = "LG Channels";
+
+                        print "[Pressed] -> " name " (Code: 0x" code ")";
+                        fflush();
+                    }
+                }
+            }'
+        done
+    ) &
+    LOOP_PID=$!
+
+    read -r _
+
+    kill "$LOOP_PID" 2>/dev/null
+    pkill -P "$LOOP_PID" 2>/dev/null
+    wait "$LOOP_PID" 2>/dev/null
+    echo
+}
+
+# --- MÓDULO 13: GATHER INFORMATION (STATUS E INFO) ---
+cmd_info_menu() {
+    while true; do
+        print_banner
+        printf "  \033[1;33m=== GATHER INFORMATION ===\033[0m\n\n"
+        printf "  \033[1;37m1)\033[0m Check Volume & Mute Status\n"
+        printf "  \033[1;37m2)\033[0m Check Picture Settings\n"
+        printf "  \033[1;37m3)\033[0m Get Device & System Info\n"
+        printf "  \033[1;37m4)\033[0m List Installed Apps\n"
+        printf "  \033[1;37m5)\033[0m Foreground App (Running Now)\n"
+        printf "  \033[1;37m6)\033[0m Background Apps\n"
+        printf "  \033[1;37m7)\033[0m Capture IR Raw Hex (event1)\n"
+        printf "  \033[1;37m8)\033[0m Real Time IR Translator\n"
+        printf "  \033[1;31m0)\033[0m Back to Main Menu\n\n"
+        printf "%b Select an option: " "$ASK"
+        read -r infopt
+
+        case "$infopt" in
+            1)
+                printf "\n%b Fetching Volume Status...\n" "$INFO"
+                echo
+                STATUS=$(luna-send -n 1 -w 1000 luna://com.webos.audio/getVolume '{}' 2>/dev/null)
+                VOL=$(echo "$STATUS" | sed -n 's/.*"volume":\([0-9]*\).*/\1/p')
+                MUTED=$(echo "$STATUS" | sed -n 's/.*"muteStatus":\([a-z]*\).*/\1/p')
+                if [ "$MUTED" = "true" ]; then
+                    printf "%b Volume: %s%% \033[1;31m(Muted)\033[0m\n" "$INFO" "$VOL"
+                else
+                    printf "%b Volume: %s%%\n" "$OK" "$VOL"
+                fi
+                printf "\n%b Press Enter to continue..." "$INFO"; read -r _
+                ;;
+            2)
+                cmd_check_picture_menu
+                ;;
+            3)
+                printf "\n"
+                uname -a
+                printf "\n"
+                lsb_release -a 2>/dev/null
+                printf "\n\033[1;5m[i] This is your webOS version\033[0m\n\n"
+                luna-send -n 1 luna://com.webos.service.tv.systemproperty/getSystemInfo '{"keys": ["modelName", "firmwareVersion", "sdkVersion"]}'
+                printf "\n%b Press Enter to continue..." "$INFO"; read -r _
+                ;;
+            4)
+                printf "\n%b Installed Applications (Title & ID):\n\n" "$INFO"
+                luna-send -n 1 -f luna://com.webos.applicationManager/listApps '{}' 2>/dev/null \
+                    | grep -E '"id":|"title":' \
+                    | sed 's/^[ \t]*//' \
+                    | sed '/"id":/G'
+                printf "%b Press Enter to continue..." "$INFO"; read -r _
+                ;;
+            5)
+                printf "\n%b This App is running now...\n\n" "$INFO"
+                sleep 1
+                luna-send -n 1 -f luna://com.webos.applicationManager/getForegroundAppInfo '{}'
+                printf "\n%b Press Enter to continue..." "$INFO"; read -r _
+                ;;
+            6)
+                printf "\n%b These Apps are in background...\n\n" "$INFO"
+                sleep 1
+                luna-send -n 1 -f luna://com.webos.applicationManager/running '{}'
+                printf "\n%b Press Enter to continue..." "$INFO"; read -r _
+                ;;
+            7)
+                cmd_capture_ir
+                ;;
+            8)
+                cmd_realtime_ir
+                ;;
+            0) break ;;
+            *) printf "\n%b Invalid option.\n" "$ERR"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- MÓDULO 14: SEND REMOTE COMMANDS (MENU DE COMANDOS) ---
+cmd_remote_menu() {
+    while true; do
+        print_banner
+        printf "  \033[1;33m=== SEND REMOTE COMMANDS ===\033[0m\n\n"
+        printf "  \033[1;37m1)\033[0m Volume Control\n"
+        printf "  \033[1;37m2)\033[0m Picture Settings\n"
+        printf "  \033[1;37m3)\033[0m Open YouTube\n"
+        printf "  \033[1;37m4)\033[0m Screen ON\n"
+        printf "  \033[1;37m5)\033[0m Screen OFF\n"
+        printf "  \033[1;37m6)\033[0m Take Screenshot\n"
+        printf "  \033[1;37m7)\033[0m Send Modal Alert\n"
+        printf "  \033[1;37m8)\033[0m Send Toast Pop-up\n"
+        printf "  \033[1;37m9)\033[0m Open Web Browser\n"
+        printf "  \033[1;37m10)\033[0m Switch Input/Source\n"
+        printf "  \033[1;37m11)\033[0m Screen Saver\n"
+        printf "  \033[1;37m12)\033[0m Send Real-Time Remote Keys\n"
+        printf "  \033[1;31m0)\033[0m Back to Main Menu\n\n"
+        printf "%b Select an option: " "$ASK"
+        read -r remopt
+
+        case "$remopt" in
+            1) cmd_vol; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            2) cmd_picture_menu ;;
+            3) cmd_yt ;;
+            4) cmd_screen_on; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            5) cmd_screen_off; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            6) cmd_screenshot; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            7) cmd_tvmsg; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            8) cmd_tvpu; printf "\n%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            9) cmd_browser ;;
+            10) cmd_input_menu ;;
+            11) cmd_screensaver; printf "%b Press Enter to continue..." "$INFO"; read -r _ ;;
+            12) cmd_realtime_keys ;;
+            0) break ;;
+            *) printf "\n%b Invalid option.\n" "$ERR"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- SUPORTE A ARGUMENTO DIRETO VIA CLI ---
+if [ -n "$1" ]; then
+    case "$1" in
+        vol) cmd_vol; exit 0 ;;
+        yt) cmd_yt "$2"; exit 0 ;;
+        tv|livetv) cmd_livetv; exit 0 ;;
+        on) cmd_screen_on; exit 0 ;;
+        off) cmd_screen_off; exit 0 ;;
+        bl) cmd_backlight; exit 0 ;;
+        scc) cmd_screenshot; exit 0 ;;
+        msg) cmd_tvmsg; exit 0 ;;
+        pu) cmd_tvpu; exit 0 ;;
+        browser) cmd_browser "$2"; exit 0 ;;
+        input) cmd_input_menu; exit 0 ;;
+        cpanel) cmd_cpanel; exit 0 ;;
+        lgchan) cmd_lgchan; exit 0 ;;
+        hdmi1) cmd_hdmi1; exit 0 ;;
+        hdmi2) cmd_hdmi2; exit 0 ;;
+        media) cmd_media; exit 0 ;;
+        saver|ss) cmd_screensaver; exit 0 ;;
+        keys|rt) cmd_realtime_keys; exit 0 ;;
+        ir|capture) cmd_capture_ir; exit 0 ;;
+        translate|realtime) cmd_realtime_ir; exit 0 ;;
+        apps) 
+            luna-send -n 1 -f luna://com.webos.applicationManager/listApps '{}' 2>/dev/null \
+                | grep -E '"id":|"title":' \
+                | sed 's/^[ \t]*//' \
+                | sed '/"id":/G'
+            exit 0 
+            ;;
+        fg)
+            luna-send -n 1 -f luna://com.webos.applicationManager/getForegroundAppInfo '{}'
+            exit 0
+            ;;
+        bg)
+            luna-send -n 1 -f luna://com.webos.applicationManager/running '{}'
+            exit 0
+            ;;
+    esac
+fi
+
+# --- MENU PRINCIPAL (PRE-MENU) ---
+while true; do
+    print_banner
+    printf "\n"
+    printf "  \033[1;37m1)\033[0m Gather Information\n"
+    printf "  \033[1;37m2)\033[0m Send Remote Commands\n"
+    printf "  \033[1;31m0)\033[0m Quit\n\n"
+    printf "%b Select an option: " "$ASK"
+    read -r mainopt
+
+    case "$mainopt" in
+        1) cmd_info_menu ;;
+        2) cmd_remote_menu ;;
+        0|q|Q) printf "\n%b Exiting webOS TVctrl...\n\n" "$INFO"; exit 0 ;;
+        *) printf "\n%b Invalid option.\n" "$ERR"; sleep 1 ;;
+    esac
+done
