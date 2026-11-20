@@ -32,6 +32,7 @@ git clone https://github.com/arm-ARMY/tvctrl.git /home/root/Apps
 mkdir -p /home/root/Apps/ScreenCap
 chmod +x /home/root/Apps/tvctrl /home/root/Apps/install.sh
 /home/root/Apps/install.sh
+export PATH="$PATH:/home/root/Apps"
 ```
 
 *(If `install.sh` does not configure your `PATH` automatically—or if you prefer to set it manually—add your script directory to `/home/root/.profile` so `tvctrl` can be run from any folder:)*
