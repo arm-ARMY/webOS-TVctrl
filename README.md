@@ -28,7 +28,7 @@ This script was written specifically for and tested on the following TV model, s
 1. Clone the repository directly into `/home/root/Apps`, create the screenshot directory, and run `install.sh` to install `tvctrl`:
 
 ```sh
-git clone [https://github.com/arm-ARMY/tvctrl.git](https://github.com/arm-ARMY/tvctrl.git) /home/root/Apps
+git clone https://github.com/arm-ARMY/tvctrl.git /home/root/Apps
 mkdir -p /home/root/Apps/ScreenCap
 chmod +x /home/root/Apps/tvctrl /home/root/Apps/install.sh
 /home/root/Apps/install.sh
