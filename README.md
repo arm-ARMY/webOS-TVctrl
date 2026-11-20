@@ -1,6 +1,6 @@
 # tvctrl
 
-CLI remote control and diagnostic script for rooted LG webOS TVs using `luna-send` and `/bin/sh`.
+CLI remote control and diagnostic script for rooted LG webOS TVs using `luna-send` and `/bin/sh`. Includes an `install.sh` script that automates setup and installation.
 
 ## Compatibility & Tested Environment
 
@@ -21,13 +21,16 @@ This script was written specifically for and tested on the following TV model an
 
 ## Installation & Running from Any Directory
 
-1. Copy `tvctrl` to a directory on your TV (for example, `/home/root/Apps`) and make it executable:
+1. Clone the repository directly into `/home/root/Apps`, create the screenshot directory, and run `install.sh` to install `tvctrl`:
 
 ```sh
-chmod +x /home/root/Apps/tvctrl
+git clone [https://github.com/arm-ARMY/tvctrl.git](https://github.com/arm-ARMY/tvctrl.git) /home/root/Apps
+mkdir -p /home/root/Apps/ScreenCap
+chmod +x /home/root/Apps/tvctrl /home/root/Apps/install.sh
+/home/root/Apps/install.sh
 ```
 
-2. To run `tvctrl` from any directory, create or edit `/home/root/.profile` and add the script's directory to `PATH`:
+*(If `install.sh` does not configure your `PATH` automatically—or if you prefer to set it manually—add your script directory to `/home/root/.profile` so `tvctrl` can be run from any folder:)*
 
 ```sh
 echo 'export PATH="$PATH:/directory_where_script_is_saved"' >> /home/root/.profile
@@ -84,5 +87,3 @@ This script interacts directly with internal webOS services via `luna-send` on r
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-
-
